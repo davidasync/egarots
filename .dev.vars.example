@@ -1,0 +1,6 @@
+# Local-only B2 credentials for `wrangler dev`. Copy to .dev.vars, which is
+# gitignored. In production these are set with `wrangler secret put` instead.
+#
+# Create the key in the B2 console scoped to the single bucket, read+write only.
+B2_KEY_ID=your-application-key-id
+B2_APP_KEY=your-application-key

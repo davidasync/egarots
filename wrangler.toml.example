@@ -1,0 +1,50 @@
+name = "egarots"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+# Objects are served straight off workers.dev. To use your own domain, add it to
+# Cloudflare and uncomment — but read "Serving untrusted bytes" in the README
+# first. workers.dev is on the Public Suffix List, so nothing stored here can set
+# a cookie that reaches a sibling Worker; a custom domain that shares a
+# registrable domain with your other sites gives that protection up.
+# routes = [{ pattern = "egarots.example.com", custom_domain = true }]
+
+[vars]
+# Origins a browser may call the API from, comma-separated. Unset allows no
+# browser origin at all. Applies to reads as well as writes, because an object is
+# fetched cross-origin rather than navigated to — the one place this service's
+# CORS differs from nikednep's. Not a secret; it is public in the response
+# headers anyway.
+ALLOWED_ORIGINS = "https://davidasync.github.io,https://davidasync.is-a.dev,http://localhost:3000,http://127.0.0.1:3000"
+
+# The bucket. Not secret — the credentials are what matter, and those are
+# secrets. A B2 account lives in exactly one region, shown next to the bucket in
+# the console as part of the S3 endpoint (s3.<region>.backblazeb2.com).
+B2_BUCKET = "egarots-objects"
+B2_REGION = "us-west-004"
+
+# Override only for testing against a local S3 stand-in. Left unset in
+# production, where the endpoint is derived from B2_REGION.
+# B2_ENDPOINT = "http://127.0.0.1:9000"
+
+# Secrets — NOT set here. B2 is an HTTP API, not a binding, so these are real
+# credentials and belong in the secret store:
+#
+#   npx wrangler secret put B2_KEY_ID
+#   npx wrangler secret put B2_APP_KEY
+#
+# For `wrangler dev`, put them in .dev.vars instead (gitignored). Create the
+# application key in the B2 console scoped to this one bucket, with
+# read+write and nothing else.
+
+# 20 writes per IP per minute. Free on every plan and costs no B2 transactions.
+# `namespace_id` is scoped to this Worker, so reusing 1001 does not collide with
+# another Worker's limiter.
+[[unsafe.bindings]]
+name = "RATE_LIMITER"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 20, period = 60 }
+
+[observability]
+enabled = true

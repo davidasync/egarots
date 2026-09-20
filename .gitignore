@@ -1,0 +1,30 @@
+.idea/
+.vscode/
+node_modules/
+.wrangler/
+dist/
+# Real B2 credentials for `wrangler dev`. The pattern catches variants like
+# .dev.vars.local; the example template is force-kept because it holds only
+# placeholders and is what new checkouts copy from.
+.dev.vars*
+!.dev.vars.example
+.env
+.env.*
+
+# Terraform. State records real bucket and account ids, and for some providers
+# credentials in plain text, so it never belongs in git.
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/*.tfstate
+terraform/*.tfstate.*
+*.tfvars
+*.tfvars.json
+crash.log
+
+# Machine-specific config. Holds no secrets by design — B2 credentials go to
+# `wrangler secret` — but the bucket, region and routes are per-deployment.
+# Copy from wrangler.toml.example.
+wrangler.toml
+
+# Local Claude Code settings (machine-specific tool permissions)
+.claude/
