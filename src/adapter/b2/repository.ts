@@ -145,7 +145,8 @@ export function newRepository(
       // Compressed here, after the core has measured and capped the object the
       // caller actually sent. `size` therefore stays the uploaded length
       // everywhere it is reported, and only the bucket sees the smaller body.
-      const stored = await compress(o.bytes);
+      // The content type is passed for the decision only — it is never rewritten.
+      const stored = await compress(o.bytes, o.contentType);
 
       const headers: Record<string, string> = {
         "content-type": o.contentType,

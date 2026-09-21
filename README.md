@@ -296,12 +296,44 @@ It lives in the adapter, not the core, because it is a property of how B2 is pai
 rather than of what an object *is*. `CompressionStream`/`DecompressionStream` are part of
 the runtime, so it costs no dependency.
 
-Both forms are produced on every write and the smaller is stored, with a **5% minimum
-saving** to bother. Gzip on already-compressed bytes — jpeg, png, zip — returns the
-input plus a header, so a blind compress would add stored bytes to exactly the objects
-that are largest. Guessing from the content type instead would be wrong in both
-directions: `application/octet-stream` is the default here and says nothing, and a CSV
-full of base64 does not compress.
+Both forms are produced and the smaller is stored, with a **5% minimum saving** to
+bother. Measuring beats guessing, because `application/octet-stream` is the default here
+and says nothing, and a CSV full of base64 does not compress.
+
+Two rules decline the measurement up front, and both are about **CPU rather than
+storage**, because gzip costs time in proportion to the bytes fed in rather than the
+bytes it saves:
+
+- **Bodies over 256 KiB are stored verbatim.** See [CPU budget](#cpu-budget).
+- **Known-compressed types are not tried** — jpeg, png, webp, mp4, zip, OOXML, anything
+  `+zip`. Gzip returns these near-unchanged. The list is enumerated rather than matched
+  as `image/*`, which would also catch bmp, tiff and wav — raw pixel and sample data that
+  compresses like text. It cannot be complete and does not need to be; the 5% floor still
+  catches whatever slips through, having spent the CPU to find out.
+
+### CPU budget
+
+The Workers **free plan allows 10 ms of CPU per invocation**. It tolerates infrequent
+overage, but a Worker that exceeds the limit *consistently* has its requests terminated
+with a `1102`. Measured in production with `wrangler tail`:
+
+| Request | CPU |
+| --- | --- |
+| 15-byte upload — isolate start + SigV4, no gzip | 13 ms |
+| 1 MB upload, gzipped | 60 ms |
+| 1 MB read, gunzipped | 36 ms |
+
+The baseline is the part worth remembering: a **15-byte upload is already over the free
+limit**, so no compression policy gets this Worker under it. SigV4 is what costs that and
+it is not optional — it needs a SHA-256 of the whole payload up front. The 256 KiB
+ceiling exists to make the overage small and occasional instead of a permanent 6x, taking
+a large write from ~60 ms back to ~20 ms.
+
+> [!NOTE]
+> Reads are **not cached**, so every read pays the gunzip again. The Cache API does not
+> function on `workers.dev` subdomains; a custom domain would make the `Cache-Control`
+> this service already sends do real work, and would also spare the B2 Class B allowance,
+> which is the tightest free limit in the stack.
 
 Two custom metadata headers carry it:
 
