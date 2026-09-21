@@ -207,6 +207,7 @@ src/
   core/storage/             entity, errors, ports, service
   adapter/
     b2/repository.ts        the byte bag
+    b2/compress.ts          gzip in, gunzip out — see Compression
     b2/sigv4.ts             request signing, because B2 is not a binding
     ratelimit/              binding, with an in-memory fallback
     clock/ nanoid/          the boring two
@@ -282,6 +283,56 @@ already taken; a collision would silently overwrite.
 > collisions negligible is what makes ids unguessable.
 
 There is no delete endpoint by design; use `make purge ID=...`.
+
+## Compression
+
+Objects are **gzipped before they are stored** and expanded again on the way out. It is
+invisible from the API: `size`, `Content-Length` and the 1 MiB cap all describe the
+object you uploaded, and only the bucket holds something smaller. B2 bills stored bytes,
+and a paste store's bodies are mostly text, so this is the cheapest lever there is —
+typical text lands at a fifth of its size or better.
+
+It lives in the adapter, not the core, because it is a property of how B2 is paid for
+rather than of what an object *is*. `CompressionStream`/`DecompressionStream` are part of
+the runtime, so it costs no dependency.
+
+Both forms are produced on every write and the smaller is stored, with a **5% minimum
+saving** to bother. Gzip on already-compressed bytes — jpeg, png, zip — returns the
+input plus a header, so a blind compress would add stored bytes to exactly the objects
+that are largest. Guessing from the content type instead would be wrong in both
+directions: `application/octet-stream` is the default here and says nothing, and a CSV
+full of base64 does not compress.
+
+Two custom metadata headers carry it:
+
+| Header | Meaning |
+| --- | --- |
+| `x-amz-meta-encoding` | `gzip`, or absent when the bytes are stored verbatim |
+| `x-amz-meta-size` | the object's real length, written on every object |
+
+`size` is what makes it work: once the body is compressed, B2's own `Content-Length`
+describes the stored bytes rather than the object, and both `GET` and `HEAD` have to
+report the real one. Objects written before this existed have neither header, decode as
+verbatim, and still serve — but an `encoding` this version cannot expand is discarded
+the same way an unreadable expiry is, rather than handing a caller compressed bytes
+under the original content type.
+
+> [!NOTE]
+> An expired object is still never expanded. `readBytes` stays a thunk, and the
+> decompressor only runs when something pulls that same stream — so a read that `404`s
+> on expiry costs no egress and no CPU.
+
+> [!IMPORTANT]
+> **The declared size is enforced, not trusted.** The bucket is reachable without going
+> through this Worker, so a gzip bomb written straight into it would expand inside an
+> isolate that has 128 MB shared across every request in flight. A gzipped object whose
+> declared size is missing or above `MAX_OBJECT_BYTES` is refused from metadata alone;
+> past that, the decompressor is cut off at the declared length and the result must match
+> it exactly, or the read is a `503`. A body that expanded to a different length than
+> advertised would make the `Content-Length` already committed to a lie.
+
+The `ETag` covers the *compressed* bytes. That is still a valid strong validator: an id
+is written once and always expands to the same body.
 
 ## Serving untrusted bytes
 
@@ -383,7 +434,7 @@ counter so local runs work without it — an approximation, not an enforcement p
 | Resource | Free allowance | Used for |
 | --- | --- | --- |
 | Workers requests | 100,000/day | every request |
-| B2 storage | 10 GB | every object |
+| B2 storage | 10 GB | every object, gzipped — see [Compression](#compression) |
 | B2 Class A (uploads, deletes) | **unlimited, free** | one per store, one per lazy delete |
 | B2 Class B (downloads, HEAD) | 2,500/day | one per read |
 | B2 Class C (listing) | 2,500/day | unused — this service never lists |
